@@ -1,14 +1,54 @@
-title: "César Sepúlveda"
-lsi: false
-safe: true
-incremental: false
-highlighter: rouge
-remote_theme: pages-themes/cayman@v0.2.0
+# Site settings
+title: César Sepúlveda
+description: |
+  Director of Infrastructure SRE/DevSecOps
+
+url: http://blog.csepulveda.net
+
+about_title: About
+projects_title: Home
+
+# User settings
+user_description_appendix: |
+  My personal blog writen using [gh-pages][gh-pages] and [jekyll][jekyll], based on [lrassaby's blog][lrassaby]
+
+  [lrassaby]: https://github.com/lrassaby/lrassaby.github.io
+  [gh-pages]: https://pages.github.com/
+  [jekyll]: https://jekyllrb.com
+
+
+email: cesar.sepulveda@gmail.com
+linkedin: csepulvedab
+github: csepulveda
+
+relevant_tags: ['kubernetes', 'go', 'race-cars']
+
+author: César Sepúlveda
+author_title: Infrastructure Engineer
+author_photo: profile-photo.jpg
+user_description_short: |
+  I am a DevOps/SRE leader with over 13 years of experience, managing infrastructure and security to ensure scalability, reliability, and compliance.
+
+
+# ## Disqus
+# disqus_identifier: rassaby
+
+# ## Tracker
+google_analytics_id: G-YPBW8TZ5KS
+
+keywords: 'software,engineer,devops,csepulveda'
+
+## URLs
+permalink: ':title/'
+
+baseurl: ''
+projects_url: '/'
+about_url: '/about'
+
+
 plugins:
-- jekyll-remote-theme # add this line to the plugins list if you already have one
-markdown: kramdown
-gist:
-  noscript: false
-kramdown:
-  math_engine: mathjax
-  syntax_highlighter: rouge
+  - jekyll-feed
+
+
+include: [_pages]
+exclude: ['package.json', 'src' , 'node_modules', 'Gemfile', 'LICENSE', 'gulpfile.js', 'README.md']

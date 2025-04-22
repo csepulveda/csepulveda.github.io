@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" ><generator uri="https://jekyllrb.com/" version="4.3.4">Jekyll</generator><link href="http://localhost:4000/feed.xml" rel="self" type="application/atom+xml" /><link href="http://localhost:4000/" rel="alternate" type="text/html" /><updated>2025-04-22T09:55:21-04:00</updated><id>http://localhost:4000/feed.xml</id><title type="html">César Sepúlveda</title><subtitle>Director of Infrastructure SRE/DevSecOps
+</subtitle><author><name>César Sepúlveda</name></author><entry><title type="html">How to Troubleshoot OOM Issues in Go Applications Running on Kubernetes</title><link href="http://localhost:4000/oom-kill/" rel="alternate" type="text/html" title="How to Troubleshoot OOM Issues in Go Applications Running on Kubernetes" /><published>2024-11-11T01:00:00-03:00</published><updated>2024-11-11T01:00:00-03:00</updated><id>http://localhost:4000/oom-kill</id><content type="html" xml:base="http://localhost:4000/oom-kill/">&lt;p&gt;Kubernetes provides valuable mechanisms to prevent nodes from being affected when certain pods consume excessive CPU or memory resources, thanks to cgroups. However, memory limits can pose unique challenges. Unlike CPU limits, which can throttle usage over time, memory cannot be gradually restricted. When a container reaches its memory limit, it receives a SIGKILL signal, causing the container to restart.&lt;/p&gt;
+
+&lt;p&gt;In my current role, we addressed this by implementing a solution for all our Go applications using the pprof library. By enabling a listening port with pprof, we can retrieve memory heap data from any running process via the /debug/pprof/heap endpoint, which returns a memory heap dump.&lt;/p&gt;
+
+&lt;p&gt;We also developed a separate application that continuously monitors memory usage. This application queries the Kubernetes metrics server to check if any container is using more than 80% of its configured memory limit. If this threshold is exceeded, it connects to the pod’s IP on a pre-configured port, retrieves the heap memory data, and stores it in S3 for further analysis using the go tool pprof.&lt;/p&gt;
+
+&lt;p&gt;This approach works well for applications with gradual memory leaks, where memory accumulation occurs slowly over time. In such cases, the monitoring service can detect high memory usage and generate a heap dump before the application receives a SIGKILL due to an OOM event.&lt;/p&gt;
+
+&lt;p&gt;However, we often encounter cases where memory leaks are more aggressive, with containers jumping from 50 MB to over 1 GB in just a few seconds.&lt;/p&gt;
+
+&lt;p&gt;To handle these cases, we implemented a different approach using a library developed by &lt;a href=&quot;https://github.com/ricardomaraschini/oomhero&quot;&gt;Ricardo Maraschini&lt;/a&gt;. This library allows a sidecar container to monitor process metrics in real-time, querying statistics every second instead of the 30-second intervals we had with the metrics server.&lt;/p&gt;
+
+&lt;p&gt;We built on this with our custom solution at &lt;a href=&quot;https://github.com/csepulveda/oom-heap-dumper&quot;&gt;https://github.com/csepulveda/oom-heap-dumper&lt;/a&gt; which enhances Maraschini’s oomhero library by adding functionality to check the app’s listening ports, download the heap from each port, and store it in S3.&lt;/p&gt;
+
+&lt;p&gt;Compared to the previous approach, this method introduces some security considerations and may not be suitable for every pod in the system. For this solution to work, we need to enable shareProcessNamespace and set the oom-heap-dumper container privileges with securityContext.privileged: true.&lt;/p&gt;
+
+&lt;p&gt;This updated approach allows us to capture a heap memory dump and send it to S3 for later analysis, even when memory spikes occur rapidly.&lt;/p&gt;
+
+&lt;h2 id=&quot;practical-example&quot;&gt;Practical Example&lt;/h2&gt;
+&lt;p&gt;Consider the following code, which forces a memory leak by doubling memory usage with each iteration:
+&lt;a href=&quot;https://github.com/csepulveda/go-memory-leak/tree/v0.0.3&quot;&gt;code&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;When running this application in a container on our Kubernetes cluster, we observe the following results:&lt;/p&gt;
+
+&lt;h3 id=&quot;deployment-configuration&quot;&gt;Deployment Configuration:&lt;/h3&gt;
+&lt;div class=&quot;language-yaml highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;na&quot;&gt;apiVersion&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;apps/v1&lt;/span&gt;
+&lt;span class=&quot;na&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;Deployment&lt;/span&gt;
+&lt;span class=&quot;na&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;go-memory-leak&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;namespace&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;default&lt;/span&gt;
+&lt;span class=&quot;na&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;replicas&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;m&quot;&gt;1&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;selector&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;na&quot;&gt;matchLabels&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;na&quot;&gt;app&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;go-memory-leak&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;template&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;na&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;na&quot;&gt;labels&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+        &lt;span class=&quot;na&quot;&gt;app&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;go-memory-leak&lt;/span&gt;
+    &lt;span class=&quot;na&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;na&quot;&gt;containers&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+        &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;app&lt;/span&gt;
+          &lt;span class=&quot;na&quot;&gt;image&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;ghcr.io/csepulveda/go-memory-leak:v0.0.3&lt;/span&gt;
+          &lt;span class=&quot;na&quot;&gt;resources&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;requests&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+              &lt;span class=&quot;na&quot;&gt;memory&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;64Mi&lt;/span&gt;
+              &lt;span class=&quot;na&quot;&gt;cpu&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;250m&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;limits&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+              &lt;span class=&quot;na&quot;&gt;memory&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;240Mi&lt;/span&gt;
+              &lt;span class=&quot;na&quot;&gt;cpu&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;250m&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;h3 id=&quot;memory-stats&quot;&gt;Memory Stats:&lt;/h3&gt;
+&lt;p&gt;&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/memory-stats.png&quot; alt=&quot;memory-stats&quot; title=&quot;memory-stats&quot; /&gt;&lt;/p&gt;
+
+&lt;h3 id=&quot;app-logs-and-oom-events&quot;&gt;App Logs and OOM events:&lt;/h3&gt;
+&lt;p&gt;&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/memory-events.png&quot; alt=&quot;memory-events&quot; title=&quot;memory-events&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/memory-events-1.png&quot; alt=&quot;memory-events-1&quot; title=&quot;memory-events-1&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;As shown, monitoring the metric server directly and attempting to take a memory dump when usage exceeds 80% is challenging. With each cycle doubling memory usage, we go from 50% to nearly 100% in one jump. These rapid changes make it difficult for the metric server to capture and respond to fluctuations in real-time.&lt;/p&gt;
+
+&lt;p&gt;To address this, our first step is to add pprof middleware to our application.&lt;/p&gt;
+
+&lt;h3 id=&quot;using-the-sidecar-to-auto-generate-the-heap-file&quot;&gt;Using the Sidecar to auto generate the Heap File&lt;/h3&gt;
+
+&lt;p&gt;Code Comparison:&lt;/p&gt;
+
+&lt;p&gt;&lt;a href=&quot;https://github.com/csepulveda/go-memory-leak/compare/v0.0.3…v0.0.4&quot;&gt;https://github.com/csepulveda/go-memory-leak/compare/v0.0.3…v0.0.4&lt;/a&gt;
+&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/code.png&quot; alt=&quot;code&quot; title=&quot;code&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;This enables us to retrieve the application’s memory heap, allowing us to analyze it locally. For example, if the app is running on port 8080, we can launch the pprof web interface on port 8081 to analyze the heap file:&lt;/p&gt;
+
+&lt;div class=&quot;language-bash highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;go tool pprof &lt;span class=&quot;nt&quot;&gt;-http&lt;/span&gt;&lt;span class=&quot;o&quot;&gt;=&lt;/span&gt;:8081 localhost:8080/debug/pprof/heap
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Through this analysis, we can see the memory leak originates within the main function, specifically when calling serializeJSON.
+&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/oom.png&quot; alt=&quot;oom&quot; title=&quot;oom&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/oom-1.png&quot; alt=&quot;oom-1&quot; title=&quot;oom-1&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;For this example, replicating the memory leak behavior is straightforward. However, in cases where memory leaks occur sporadically, capturing a memory dump at the exact moment of high memory usage is essential. This is where our sidecar solution becomes invaluable.&lt;/p&gt;
+
+&lt;h2 id=&quot;deployment-configuration-to-add-the-sidecar&quot;&gt;Deployment Configuration to Add the Sidecar:&lt;/h2&gt;
+&lt;div class=&quot;language-yaml highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;na&quot;&gt;apiVersion&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;apps/v1&lt;/span&gt;
+&lt;span class=&quot;na&quot;&gt;kind&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;Deployment&lt;/span&gt;
+&lt;span class=&quot;na&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;go-memory-leak&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;namespace&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;default&lt;/span&gt;
+&lt;span class=&quot;na&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;replicas&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;m&quot;&gt;1&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;selector&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;na&quot;&gt;matchLabels&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;na&quot;&gt;app&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;go-memory-leak&lt;/span&gt;
+  &lt;span class=&quot;na&quot;&gt;template&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+    &lt;span class=&quot;na&quot;&gt;metadata&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;na&quot;&gt;labels&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+        &lt;span class=&quot;na&quot;&gt;app&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;go-memory-leak&lt;/span&gt;
+    &lt;span class=&quot;na&quot;&gt;spec&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+      &lt;span class=&quot;na&quot;&gt;shareProcessNamespace&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;no&quot;&gt;true&lt;/span&gt;
+      &lt;span class=&quot;na&quot;&gt;containers&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+        &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;app&lt;/span&gt;
+          &lt;span class=&quot;na&quot;&gt;image&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;ghcr.io/csepulveda/go-memory-leak:v0.0.4&lt;/span&gt;
+          &lt;span class=&quot;na&quot;&gt;resources&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;requests&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+              &lt;span class=&quot;na&quot;&gt;memory&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;64Mi&lt;/span&gt;
+              &lt;span class=&quot;na&quot;&gt;cpu&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;250m&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;limits&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+              &lt;span class=&quot;na&quot;&gt;memory&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;130Mi&lt;/span&gt;
+              &lt;span class=&quot;na&quot;&gt;cpu&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;250m&lt;/span&gt;
+        &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;oom-heap-dump&lt;/span&gt;
+          &lt;span class=&quot;na&quot;&gt;image&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;ghcr.io/csepulveda/oom-heap-dumper:v0.0.5&lt;/span&gt;
+          &lt;span class=&quot;na&quot;&gt;securityContext&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;privileged&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;no&quot;&gt;true&lt;/span&gt;
+          &lt;span class=&quot;na&quot;&gt;env&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt;
+          &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;CRITICAL&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;value&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;70&quot;&lt;/span&gt;
+          &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;COOLDOWN&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;value&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;10s&quot;&lt;/span&gt;
+          &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;WATCH_TIME&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;value&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;100ms&quot;&lt;/span&gt;
+          &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;BUCKET&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;value&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;bucket-name&quot;&lt;/span&gt;
+          &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;AWS_REGION&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;value&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;us-west-1&quot;&lt;/span&gt;
+          &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;AWS_ACCESS_KEY_ID&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;value&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;xxx&quot;&lt;/span&gt;
+          &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;AWS_SECRET_ACCESS_KEY&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;value&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;yyy&quot;&lt;/span&gt;
+          &lt;span class=&quot;pi&quot;&gt;-&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;AWS_SESSION_TOKEN&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;value&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;zzz&quot;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;In this YAML, the keys and bucket name are masked for security, but it’s possible to pass credentials directly as environment variables or use a service account that grants write permissions to the bucket where memory heaps will be stored. For more on setting permissions, check out my post on configuring IAM roles with service accounts: &lt;a href=&quot;https://medium.com/@csepulvedab/three-approaches-to-defining-iam-roles-in-kubernetes-on-eks-a3094201333f&quot;&gt;how to define iam roles on eks&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;When the app is running, you’ll see logs from our oom-dumper once it reaches the 70% memory threshold set as the maximum memory usage.&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/mem-1.png&quot; alt=&quot;mem-1&quot; title=&quot;mem-1&quot; /&gt;
+&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/mem-2.png&quot; alt=&quot;mem-2&quot; title=&quot;mem-2&quot; /&gt;&lt;/p&gt;
+
+&lt;h2 id=&quot;retrieving-and-visualizing-the-heap&quot;&gt;Retrieving and Visualizing the Heap&lt;/h2&gt;
+
+&lt;p&gt;Download the heap from S3 and view it locally:&lt;/p&gt;
+&lt;div class=&quot;language-yaml highlighter-rouge&quot;&gt;&lt;div class=&quot;highlight&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;s&quot;&gt;aws s3 cp s3://xxxx/go-memory-leak-54d6d47d7-6hl64-7-8080-2024-11-11-03-49.heap .&lt;/span&gt;
+&lt;span class=&quot;na&quot;&gt;download&lt;/span&gt;&lt;span class=&quot;pi&quot;&gt;:&lt;/span&gt; &lt;span class=&quot;s&quot;&gt;s3://xxxx/go-memory-leak-54d6d47d7-6hl64-7-8080-2024-11-11-03-49.heap to ./go-memory-leak-54d6d47d7-6hl64-7-8080-2024-11-11-03-49.heap&lt;/span&gt;
+
+&lt;span class=&quot;s&quot;&gt;go tool pprof -http=:8081 go-memory-leak-54d6d47d7-6hl64-7-8080-2024-11-11-03-49.heap&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;/div&gt;
+
+&lt;p&gt;Review the memory heap from the web interface provided by go tool pprof.
+&lt;img src=&quot;/assets/img/2024-11-11-oom-kill/pprof.png&quot; alt=&quot;pprof&quot; title=&quot;pprof&quot; /&gt;&lt;/p&gt;
+
+&lt;h2 id=&quot;conclusion&quot;&gt;Conclusion&lt;/h2&gt;
+&lt;p&gt;Using go tool pprof, we can manually capture memory heaps during OOM events. Setting up the pprof wrapper for on-demand heaps is relatively straightforward. However, capturing a heap at a specific high-memory usage moment can be challenging. For these cases, monitoring tools that automatically generate/store heaps can be invaluable, making the csepulveda/oom-heap-dumper sidecar an effective tool for managing memory dumps in high-demand situations.&lt;/p&gt;</content><author><name>César Sepúlveda</name></author><category term="kubernetes" /><category term="go" /><summary type="html">Kubernetes provides valuable mechanisms to prevent nodes from being affected when certain pods consume excessive CPU or memory resources, thanks to cgroups. However, memory limits can pose unique challenges. Unlike CPU limits, which can throttle usage over time, memory cannot be gradually restricted. When a container reaches its memory limit, it receives a SIGKILL signal, causing the container to restart.</summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="http://localhost:4000/2024-11-11-oom-kill/oom.png" /><media:content medium="image" url="http://localhost:4000/2024-11-11-oom-kill/oom.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Cad Cartagena - P14 to P2</title><link href="http://localhost:4000/p14-to-p2/" rel="alternate" type="text/html" title="Cad Cartagena - P14 to P2" /><published>2024-08-25T20:00:00-04:00</published><updated>2024-08-25T20:00:00-04:00</updated><id>http://localhost:4000/p14-to-p2</id><content type="html" xml:base="http://localhost:4000/p14-to-p2/">&lt;p&gt;Caffè Vivaldi has been my musical home since I came to NYC 3 years ago. It was the first place I performed in the city, 
+and I’ve met some of the most talented, genuine people of my life through it.&lt;/p&gt;
+
+&lt;p&gt;It shut down permanently last week, but we managed to get a video of our last two songs there. Skip ahead to 2:00 for the 
+beginning of the song, or watch the whole thing if you’re feeling like the full experience.&lt;/p&gt;
+
+&lt;div class=&quot;iframe-wrapper&quot;&gt;
+&lt;iframe width=&quot;560&quot; height=&quot;315&quot; src=&quot;https://www.youtube.com/embed/OgwoqnDTQao?si=B4OuLr1jSqzMi4jJ&quot; title=&quot;YouTube video player&quot; frameborder=&quot;0&quot; allow=&quot;accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share&quot; referrerpolicy=&quot;strict-origin-when-cross-origin&quot; allowfullscreen=&quot;&quot;&gt;&lt;/iframe&gt;
+&lt;/div&gt;</content><author><name>César Sepúlveda</name></author><category term="race-cars" /><summary type="html">Caffè Vivaldi has been my musical home since I came to NYC 3 years ago. It was the first place I performed in the city, and I’ve met some of the most talented, genuine people of my life through it.</summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="http://localhost:4000/2024-08-26-p14-to-p2/post.png" /><media:content medium="image" url="http://localhost:4000/2024-08-26-p14-to-p2/post.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry></feed>

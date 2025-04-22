@@ -1,0 +1,18 @@
+---
+layout: default-with-header
+title: About
+permalink: /about/
+---
+<div class="small-wrapper">
+  <div class="about-container">
+    <section class="about-header">
+        <div class="author-image-container">
+            <img src="{{site.baseurl}}/assets/img/{% if site.author_photo %}{{site.author_photo}}{% endif %}" alt="{{site.author}}">
+        </div>
+    </section>
+    <section class="about-body">
+        {{ site.user_description_short | markdownify }}
+        {{ site.user_description_appendix | markdownify }}
+    </section>
+  </div> <!-- End About Container -->
+</div> <!-- End Small Wrapper -->
