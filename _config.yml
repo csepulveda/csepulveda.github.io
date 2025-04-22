@@ -3,6 +3,8 @@ lsi: false
 safe: true
 incremental: false
 highlighter: rouge
+heme: jekyll-theme-minimal
+markdown: kramdown
 gist:
   noscript: false
 kramdown:
