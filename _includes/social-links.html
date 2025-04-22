@@ -16,6 +16,12 @@
     {% else %}
     {% endif %}
 
+    {% if site.medium %}
+    <li class="medium" data-balloon="Medium" data-balloon-pos="right"><a href="http://medium.com/@{{site.medium}}" target="_blank"><i
+            class="fab fa-medium"></i></a></li>
+    {% else %}
+    {% endif %}
+
     {% if site.angellist %}
     <li class="angellist" data-balloon="AngelList" data-balloon-pos="right"><a href="http://angel.co/{{site.angellist}}" target="_blank"><i
             class="fab fa-angellist"></i></a></li>
