@@ -8,4 +8,6 @@ group :jekyll_plugins do
   gem "jekyll-timeago", "~> 0.13.1"
   gem "jekyll-remote-theme", "~> 0.4.2"
   gem "jekyll-feed", "~> 0.15.0"
+  gem 'jekyll-seo-tag'
+  gem 'jekyll-sitemap'
 end
