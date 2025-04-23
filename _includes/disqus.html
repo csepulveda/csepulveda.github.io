@@ -1,6 +1,11 @@
 <section class="comment-area">
   <div class="comment-wrapper">
     {% if site.disqus_identifier %}
+    <style>
+      iframe[src*="ads-iframe"] {
+        display: none !important;
+      }
+    </style>
     <div id="disqus_thread" class="article-comments"></div>
     <script>
       (function() {
