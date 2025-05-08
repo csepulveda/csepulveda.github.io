@@ -6,7 +6,9 @@
   <title>{% if page.title %}{{ page.title }} | {% endif %}{{ site.title }}</title>
 
   {% if page.canonical %}
-  <link rel="canonical" href="{{ page.canonical | default: site.url | append: page.url }}" />
+  <link rel="canonical" href="{{ page.canonical }}" />
+  {% else %}
+  <meta rel="canonical" href="{{ site.url | append: site.baseurl | append: page.url }}"/>
   {% endif %}
 
   <!-- For Atom Feed-->
