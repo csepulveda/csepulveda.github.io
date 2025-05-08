@@ -4,6 +4,7 @@ title: My Local K8s Cluster in Action
 date: 2025-04-22 00:00:00 -0400
 image: 2025-04-22-local-kubernetes/intro.png
 tags: [kubernetes]
+canonical: https://csepulveda.net/local-kubernetes/
 ---
 
 For a long time, I dreamed of spinning up and maintaining a local Kubernetes cluster to run my personal apps 24/7.
